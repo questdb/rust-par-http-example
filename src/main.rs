@@ -141,12 +141,15 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     let base = format!("http://{}:{}/exp", args.host, args.port);
-    let query = "select * from cpu limit";
+    let query = "select * from cpu limit 50000";
     let url = Url::parse_with_params(&base, &[("query", query)])?;
 
+    let start_time = std::time::Instant::now();
     let response = reqwest::get(url).await?;
     let frame = to_dataframe(response).await?;
+    let elapsed = start_time.elapsed();
     println!("{}", frame);
+    println!("elapsed: {:?}", elapsed);
 
     Ok(())
 }
