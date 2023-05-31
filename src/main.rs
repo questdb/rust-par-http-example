@@ -1,19 +1,16 @@
-use std::collections::BTreeMap;
-use std::io;
-use tokio;
 use clap::Parser;
 use csv_async::AsyncReaderBuilder;
-use reqwest::Url;
 use futures::stream::TryStreamExt;
 use futures::StreamExt;
-use bytes::Bytes;
-use polars::chunked_array::builder::Utf8ChunkedBuilderCow;
-use polars::export::arrow::array::MutableUtf8Array;
 use polars::export::chrono::NaiveDateTime;
 use polars::frame::DataFrame;
+use polars::prelude::{
+    ChunkedBuilder, Float64Type, Int64Type, PrimitiveChunkedBuilder, TimeUnit, Utf8ChunkedBuilder,
+};
 use polars::series::Series;
-use polars::prelude::{ChunkedBuilder, DatetimeChunked, Float64Type, Int64Type, NamedFromOwned, PrimitiveChunkedBuilder, TimeUnit, Utf8ChunkedBuilder};
-
+use reqwest::Url;
+use std::io;
+use tokio;
 
 /// Query the TSBS dataset into memory from concurrent connections.
 #[derive(Parser)]
@@ -114,32 +111,28 @@ async fn to_dataframe(response: reqwest::Response) -> anyhow::Result<DataFrame> 
                     let ts = NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S.%fZ")?;
                     let parsed = ts.timestamp_nanos();
                     vec.append_value(parsed);
-                },
+                }
             }
         }
     }
 
-
-
-    let series = columns.into_iter().map(|column| {
-        match column {
+    let series = columns
+        .into_iter()
+        .map(|column| match column {
             ColumnVec::Utf8(vec) => Series::from(vec.finish()),
             ColumnVec::Double(vec) => Series::from(vec.finish()),
             ColumnVec::Timestamp(vec) => {
                 let dt_chunked = vec.finish().into_datetime(TimeUnit::Nanoseconds, None);
                 Series::from(dt_chunked)
-            },
-        }
-    }).collect::<Vec<_>>();
+            }
+        })
+        .collect::<Vec<_>>();
 
     let df = DataFrame::new(series)?;
     Ok(df)
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let args = Args::parse();
-
+async fn run(args: Args) -> anyhow::Result<()> {
     let base = format!("http://{}:{}/exp", args.host, args.port);
     let query = "select * from cpu limit 50000";
     let url = Url::parse_with_params(&base, &[("query", query)])?;
@@ -152,4 +145,15 @@ async fn main() -> anyhow::Result<()> {
     println!("elapsed: {:?}", elapsed);
 
     Ok(())
+}
+
+fn main() -> anyhow::Result<()> {
+    let args = Args::parse();
+    let mut rt_builder = tokio::runtime::Builder::new_multi_thread();
+    rt_builder.enable_all();
+    if let Some(threads) = args.threads {
+        rt_builder.worker_threads(threads);
+    }
+    let rt = rt_builder.build()?;
+    rt.block_on(async { run(args).await })
 }
