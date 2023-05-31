@@ -1,0 +1,3 @@
+[submodule "py-tsbs-benchmark"]
+	path = py-tsbs-benchmark
+	url = https://github.com/questdb/py-tsbs-benchmark.git
