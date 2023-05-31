@@ -1,7 +1,7 @@
 use clap::Parser;
 use csv_async::AsyncReaderBuilder;
 use futures::stream::TryStreamExt;
-use futures::StreamExt;
+use futures::{stream, StreamExt};
 use polars::export::chrono::NaiveDateTime;
 use polars::frame::DataFrame;
 use polars::prelude::{
@@ -134,16 +134,46 @@ async fn to_dataframe(response: reqwest::Response) -> anyhow::Result<DataFrame> 
 
 async fn run(args: Args) -> anyhow::Result<()> {
     let base = format!("http://{}:{}/exp", args.host, args.port);
-    let query = "select * from cpu limit 50000";
-    let url = Url::parse_with_params(&base, &[("query", query)])?;
+    let tot_rows = 5000000;
+    let rows_per_spawn = tot_rows / args.concurrency;
+    if tot_rows % args.concurrency != 0 {
+        return Err(anyhow::anyhow!(
+            "total rows {} must be divisible by concurrency {}",
+            tot_rows,
+            args.concurrency
+        ));
+    }
+
+    let client = reqwest::Client::new();
+    let urls = (0..args.concurrency)
+        .map(|i| {
+            let start_row = i * rows_per_spawn;
+            let end_row = start_row + rows_per_spawn;
+            (start_row, end_row)
+        })
+        .collect::<Vec<_>>();
 
     let start_time = std::time::Instant::now();
-    let response = reqwest::get(url).await?;
-    let frame = to_dataframe(response).await?;
+    let results = stream::iter(urls)
+        .map(|(start_row, end_row)| {
+            let client = &client;
+            let base = base.clone();
+            async move {
+                let query = format!("select * from cpu limit {},{}", start_row, end_row);
+                let url = Url::parse_with_params(&base, &[("query", query)])?;
+                let response = client.get(url).send().await?;
+                let frame = to_dataframe(response).await?;
+                Ok::<_, anyhow::Error>(frame)
+            }
+        })
+        .buffer_unordered(args.concurrency);
+    let frames = results.collect::<Vec<_>>().await;
     let elapsed = start_time.elapsed();
-    println!("{}", frame);
+    for frame in frames {
+        let frame = frame?;
+        println!("{}", frame);
+    }
     println!("elapsed: {:?}", elapsed);
-
     Ok(())
 }
 
