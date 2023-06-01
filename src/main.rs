@@ -1,3 +1,4 @@
+use std::fs::File;
 use clap::Parser;
 use csv_async::{AsyncReaderBuilder, StringRecord};
 use futures::stream::TryStreamExt;
@@ -10,6 +11,8 @@ use polars::prelude::{
 use polars::series::Series;
 use reqwest::Url;
 use std::io;
+use std::path::Path;
+use polars_io::parquet::ParquetWriter;
 use tokio;
 
 /// Query the TSBS dataset into memory from concurrent connections.
@@ -34,6 +37,10 @@ struct Args {
     /// Number of rows to query
     #[clap(long, default_value = "5000000")]
     tot_rows: usize,
+
+    /// Write the result to Parquet format at this path
+    #[clap(long)]
+    to_parquet: Option<String>,
 }
 
 enum ColumnVec {
@@ -190,7 +197,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
         frames.push(frame.lazy());
     }
 
-    let frame: DataFrame = concat(&frames, false, false)?.collect()?;
+    let mut frame: DataFrame = concat(&frames, false, false)?.collect()?;
     let elapsed = start_time.elapsed();
     println!("{}", frame);
     println!("elapsed: {:?}", elapsed);
@@ -203,6 +210,15 @@ async fn run(args: Args) -> anyhow::Result<()> {
         "Data throughput: {} MiB/sec (of downloaded CSV data)",
         bytes_throughput
     );
+
+    if let Some(path) = args.to_parquet {
+        println!("Writing dataframe to {} as parquet", path);
+        let path = Path::new(&path);
+        let file = File::options().write(true).create(true).open(path)?;
+        let writer = ParquetWriter::new(file);
+        writer.finish(&mut frame)?;
+    }
+
     Ok(())
 }
 
