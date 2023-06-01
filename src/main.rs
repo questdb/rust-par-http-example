@@ -28,6 +28,10 @@ struct Args {
     /// Number of concurrent HTTP requests
     #[clap(long, default_value = "1")]
     concurrency: usize,
+
+    /// Number of rows to query
+    #[clap(long, default_value = "5000000")]
+    tot_rows: usize,
 }
 
 enum ColumnVec {
@@ -100,8 +104,9 @@ async fn to_dataframe(response: reqwest::Response, start_row: usize, end_row: us
 
     while let Some(record) = records.next().await {
         let record = record?;
+        let thread_id = std::thread::current().id();
         for (i, value) in record.iter().enumerate() {
-            let value = std::str::from_utf8(value)?;
+            let value = unsafe { std::str::from_utf8_unchecked(value) };
             let column = &mut columns[i];
             match column {
                 ColumnVec::Utf8(vec) => vec.append_value(value.to_owned()),
@@ -132,8 +137,8 @@ async fn to_dataframe(response: reqwest::Response, start_row: usize, end_row: us
 }
 
 async fn run(args: Args) -> anyhow::Result<()> {
-    let base = format!("http://{}:{}/exp", args.host, args.port);
-    let tot_rows = 5000000;
+    let base_url = format!("http://{}:{}/exp", args.host, args.port);
+    let tot_rows = args.tot_rows;
     let rows_per_spawn = tot_rows / args.concurrency;
     if tot_rows % args.concurrency != 0 {
         return Err(anyhow::anyhow!(
@@ -143,8 +148,11 @@ async fn run(args: Args) -> anyhow::Result<()> {
         ));
     }
 
-    let client = reqwest::Client::new();
-    let urls = (0..args.concurrency)
+    let client = reqwest::ClientBuilder::new()
+        .deflate(true)
+        .gzip(true)
+        .build()?;
+    let ranges = (0..args.concurrency)
         .map(|i| {
             let start_row = i * rows_per_spawn;
             let end_row = start_row + rows_per_spawn;
@@ -153,23 +161,27 @@ async fn run(args: Args) -> anyhow::Result<()> {
         .collect::<Vec<_>>();
 
     let start_time = std::time::Instant::now();
-    let results = stream::iter(urls)
-        .map(|(start_row, end_row)| {
-            let client = &client;
-            let base = base.clone();
-            async move {
-                let query = format!("select * from cpu limit {},{}", start_row, end_row);
-                let url = Url::parse_with_params(&base, &[("query", query)])?;
-                let response = client.get(url).send().await?;
-                let frame = to_dataframe(response, start_row, end_row).await?;
-                Ok::<_, anyhow::Error>((start_row, end_row, frame))
-            }
+
+    let handles: Vec<_> = ranges.iter().map(|(start_row, end_row)| {
+        let start_row = *start_row;
+        let end_row = *end_row;
+        let base_url = base_url.clone();
+        let client = client.clone();
+        tokio::task::spawn(async move {
+            let query = format!("select * from cpu limit {},{}", start_row, end_row);
+            let url = Url::parse_with_params(&base_url, &[("query", query)])?;
+            let response = client.get(url).send().await?;
+            let frame = to_dataframe(response, start_row, end_row).await?;
+            Ok::<_, anyhow::Error>(frame)
         })
-        .buffer_unordered(args.concurrency);
-    let frames_or_err = results.collect::<Vec<_>>().await;
-    let mut frames = frames_or_err.into_iter().collect::<anyhow::Result<Vec<_>>>()?;
-    frames.sort_by_key(|(start_row, _, _)| *start_row);
-    let frames: Vec<LazyFrame> = frames.into_iter().map(|(_, _, frame)| frame.lazy()).collect();
+    }).collect();
+
+    let mut frames: Vec<_> = Vec::new();
+    for handle in handles {
+        let frame = handle.await??;
+        frames.push(frame.lazy());
+    }
+
     let frame: DataFrame = concat(&frames, false, false)?.collect()?;
     let elapsed = start_time.elapsed();
     println!("{}", frame);
