@@ -128,6 +128,27 @@ Row throughput: 2686420 rows/sec
 Data throughput: 715 MiB/sec (of downloaded CSV data)
 ```
 
+## Synthetic HTTP benchmark
+
+By default, the binary decodes the CSV data and loads it into a dataframe.
+
+To just benchmark the HTTP download on its own, recompile and re-run disabling default features:
+
+```shell
+cargo run --release --no-default-features -- --concurrency 8
+```
+
+```
+    Finished release [optimized] target(s) in 0.05s
+     Running `target/release/rust-par-http-example --concurrency 8`
+elapsed: 1.214560961s
+Row throughput: 4116713 rows/sec
+Data throughput: 1096 MiB/sec (of downloaded CSV data)
+```
+
+This is not representative of any real use case, but it shows the bottleneck
+is still in decoding the CSV result.
+
 ## Finally, stop QuestDB
 
 ```shell
