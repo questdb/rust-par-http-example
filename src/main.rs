@@ -72,12 +72,12 @@ impl ColumnBuilder {
         Self::Utf8(Utf8ChunkedBuilder::new(name, capacity, bytes_capacity))
     }
 
-    fn new_double(name: &str) -> Self {
-        Self::Double(PrimitiveChunkedBuilder::new(name, 0))
+    fn new_double(name: &str, capacity: usize) -> Self {
+        Self::Double(PrimitiveChunkedBuilder::new(name, capacity))
     }
 
-    fn new_timestamp(name: &str) -> Self {
-        Self::Timestamp(PrimitiveChunkedBuilder::new(name, 0))
+    fn new_timestamp(name: &str, capacity: usize) -> Self {
+        Self::Timestamp(PrimitiveChunkedBuilder::new(name, capacity))
     }
 }
 
@@ -94,17 +94,17 @@ fn new_column_builder(col_name: &str, capacity: usize) -> anyhow::Result<ColumnB
         "service" => ColumnBuilder::new_utf8(col_name, capacity, 2 * capacity),
         "service_version" => ColumnBuilder::new_utf8(col_name, capacity, 1 * capacity),
         "service_environment" => ColumnBuilder::new_utf8(col_name, capacity, 7 * capacity),
-        "usage_user" => ColumnBuilder::new_double(col_name),
-        "usage_system" => ColumnBuilder::new_double(col_name),
-        "usage_idle" => ColumnBuilder::new_double(col_name),
-        "usage_nice" => ColumnBuilder::new_double(col_name),
-        "usage_iowait" => ColumnBuilder::new_double(col_name),
-        "usage_irq" => ColumnBuilder::new_double(col_name),
-        "usage_softirq" => ColumnBuilder::new_double(col_name),
-        "usage_steal" => ColumnBuilder::new_double(col_name),
-        "usage_guest" => ColumnBuilder::new_double(col_name),
-        "usage_guest_nice" => ColumnBuilder::new_double(col_name),
-        "timestamp" => ColumnBuilder::new_timestamp(col_name),
+        "usage_user" => ColumnBuilder::new_double(col_name, capacity),
+        "usage_system" => ColumnBuilder::new_double(col_name, capacity),
+        "usage_idle" => ColumnBuilder::new_double(col_name, capacity),
+        "usage_nice" => ColumnBuilder::new_double(col_name, capacity),
+        "usage_iowait" => ColumnBuilder::new_double(col_name, capacity),
+        "usage_irq" => ColumnBuilder::new_double(col_name, capacity),
+        "usage_softirq" => ColumnBuilder::new_double(col_name, capacity),
+        "usage_steal" => ColumnBuilder::new_double(col_name, capacity),
+        "usage_guest" => ColumnBuilder::new_double(col_name, capacity),
+        "usage_guest_nice" => ColumnBuilder::new_double(col_name, capacity),
+        "timestamp" => ColumnBuilder::new_timestamp(col_name, capacity),
         _ => return Err(anyhow::anyhow!("unknown column {:?}", col_name)),
     };
     Ok(column)
@@ -182,11 +182,9 @@ async fn run(args: Args) -> anyhow::Result<()> {
     let base_url = format!("http://{}:{}/exp", args.host, args.port);
     let tot_rows = args.tot_rows;
     let rows_per_spawn = tot_rows / args.concurrency;
-    if tot_rows % args.concurrency != 0 {
+    if rows_per_spawn == 0 {
         return Err(anyhow::anyhow!(
-            "total rows {} must be divisible by concurrency {}",
-            tot_rows,
-            args.concurrency
+            "total rows must be greater than concurrency"
         ));
     }
 
@@ -204,7 +202,10 @@ async fn run(args: Args) -> anyhow::Result<()> {
     let ranges = (0..args.concurrency)
         .map(|i| {
             let start_row = i * rows_per_spawn;
-            let end_row = start_row + rows_per_spawn;
+            let mut end_row = start_row + rows_per_spawn;
+            if i == args.concurrency - 1 {
+                end_row = tot_rows;
+            }
             (start_row, end_row)
         })
         .collect::<Vec<_>>();
