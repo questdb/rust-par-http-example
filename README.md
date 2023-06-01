@@ -31,31 +31,6 @@ Next, double-check that the server is running and serving requests over HTTP.
 
 Visit: http://localhost:9000/
 
-## Configuring QuestDB
-
-Now that we've started the DB for the first time, we can tweak its default generated configuration.
-
-Temporarily, stop the server:
-
-```shell
-cd questdb  # if you're not in the questdb dir already
-./questdb-7.1.3-rt-linux-amd64/bin/questdb.sh stop -d data
-```
-
-Edit `questdb/data/conf/server.conf` and add the following settings:
-
-```ini
-http.connection.pool.initial.capacity=16
-http.worker.count=16
-```
-
-Then start QuestDB again:
-
-```shell
-./questdb-7.1.3-rt-linux-amd64/bin/questdb.sh start -d data
-```
-
-
 ## Insert 5 million rows of sample data
 
 Once you have a QuestDB instance running, you can insert sample data via the Python TSBS script.
