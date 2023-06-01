@@ -130,8 +130,8 @@ cargo run --release -- --concurrency 5
 ```
 
 ```
-    Finished release [optimized] target(s) in 0.07s
-     Running `target/release/rust-par-http-example --concurrency 5`
+    Finished release [optimized] target(s) in 0.08s
+     Running `target/release/rust-par-http-example --concurrency 8`
 shape: (5_000_000, 21)
 ┌───────────┬────────────────┬─────────────────┬──────┬───┬─────────────┬─────────────┬──────────────────┬─────────────────────┐
 │ hostname  ┆ region         ┆ datacenter      ┆ rack ┆ … ┆ usage_steal ┆ usage_guest ┆ usage_guest_nice ┆ timestamp           │
@@ -148,8 +148,9 @@ shape: (5_000_000, 21)
 │ host_3998 ┆ eu-west-1      ┆ eu-west-1b      ┆ 53   ┆ … ┆ 21.004499   ┆ 78.341154   ┆ 18.880808        ┆ 2017-08-01 16:53:00 │
 │ host_3999 ┆ us-east-1      ┆ us-east-1c      ┆ 87   ┆ … ┆ 19.05504    ┆ 78.094993   ┆ 19.263652        ┆ 2017-08-01 16:53:10 │
 └───────────┴────────────────┴─────────────────┴──────┴───┴─────────────┴─────────────┴──────────────────┴─────────────────────┘
-elapsed: 5.741844323s
-rows/sec: 870800
+elapsed: 1.861212519s
+Row throughput: 2686420 rows/sec
+Data throughput: 715 MiB/sec (of downloaded CSV data)
 ```
 
 ## Finally, stop QuestDB
