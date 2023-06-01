@@ -1,19 +1,35 @@
-use std::fs::File;
 use clap::Parser;
-use csv_async::{AsyncReaderBuilder, StringRecord};
-use futures::stream::TryStreamExt;
-use polars::export::chrono::NaiveDateTime;
-use polars::frame::DataFrame;
-use polars::prelude::{
-    concat, ChunkedBuilder, Float64Type, Int64Type, IntoLazy, PrimitiveChunkedBuilder, TimeUnit,
-    Utf8ChunkedBuilder,
-};
-use polars::series::Series;
 use reqwest::Url;
-use std::io;
-use std::path::Path;
-use polars_io::parquet::ParquetWriter;
 use tokio;
+
+#[cfg(feature = "dataframe")]
+use std::fs::File;
+
+#[cfg(feature = "dataframe")]
+use csv_async::{AsyncReaderBuilder, StringRecord};
+
+#[cfg(feature = "dataframe")]
+use futures::stream::TryStreamExt;
+
+
+#[cfg(feature = "dataframe")]
+use std::io;
+
+#[cfg(feature = "dataframe")]
+use std::path::Path;
+
+#[cfg(feature = "dataframe")]
+use polars::{
+    frame::DataFrame,
+    export::chrono::NaiveDateTime,
+    series::Series,
+    prelude::{
+        concat, ChunkedBuilder, Float64Type, Int64Type, IntoLazy, PrimitiveChunkedBuilder, TimeUnit,
+        Utf8ChunkedBuilder},
+};
+
+#[cfg(feature = "dataframe")]
+use polars_io::parquet::ParquetWriter;
 
 /// Query the TSBS dataset into memory from concurrent connections.
 #[derive(Parser)]
@@ -39,16 +55,19 @@ struct Args {
     tot_rows: usize,
 
     /// Write the result to Parquet format at this path
+    #[cfg(feature = "dataframe")]
     #[clap(long)]
     to_parquet: Option<String>,
 }
 
+#[cfg(feature = "dataframe")]
 enum ColumnVec {
     Utf8(Utf8ChunkedBuilder),
     Double(PrimitiveChunkedBuilder<Float64Type>),
     Timestamp(PrimitiveChunkedBuilder<Int64Type>),
 }
 
+#[cfg(feature = "dataframe")]
 impl ColumnVec {
     fn new_utf8(name: &str, capacity: usize, bytes_capacity: usize) -> Self {
         Self::Utf8(Utf8ChunkedBuilder::new(name, capacity, bytes_capacity))
@@ -63,6 +82,7 @@ impl ColumnVec {
     }
 }
 
+#[cfg(feature = "dataframe")]
 fn new_column(name: &str, capacity: usize) -> anyhow::Result<ColumnVec> {
     let column = match name {
         "hostname" => ColumnVec::new_utf8(name, capacity, 9 * capacity),
@@ -91,6 +111,7 @@ fn new_column(name: &str, capacity: usize) -> anyhow::Result<ColumnVec> {
     Ok(column)
 }
 
+#[cfg(feature = "dataframe")]
 async fn to_dataframe(
     response: reqwest::Response,
     start_row: usize,
@@ -183,23 +204,47 @@ async fn run(args: Args) -> anyhow::Result<()> {
                 let query = format!("select * from cpu limit {},{}", start_row, end_row);
                 let url = Url::parse_with_params(&base_url, &[("query", query)])?;
                 let response = client.get(url).send().await?;
-                let (byte_count, frame) = to_dataframe(response, start_row, end_row).await?;
-                Ok::<_, anyhow::Error>((byte_count, frame))
+
+                #[cfg(feature = "dataframe")]
+                {
+                    let (byte_count, frame) = to_dataframe(response, start_row, end_row).await?;
+                    Ok::<_, anyhow::Error>((byte_count, frame))
+                }
+
+                #[cfg(not(feature = "dataframe"))]
+                {
+                    let byte_count = response.bytes().await?.len() as u64;
+                    Ok::<_, anyhow::Error>(byte_count)
+                }
             })
         })
         .collect();
 
+    #[cfg(feature = "dataframe")]
     let mut frames: Vec<_> = Vec::new();
     let mut tot_bytes = 0;
     for handle in handles {
+
+        #[cfg(feature = "dataframe")]
         let (byte_count, frame) = handle.await??;
+
+        #[cfg(not(feature = "dataframe"))]
+        let byte_count = handle.await??;
+
         tot_bytes += byte_count;
+
+        #[cfg(feature = "dataframe")]
         frames.push(frame.lazy());
     }
 
+    #[cfg(feature = "dataframe")]
     let mut frame: DataFrame = concat(&frames, false, false)?.collect()?;
+
     let elapsed = start_time.elapsed();
+
+    #[cfg(feature = "dataframe")]
     println!("{}", frame);
+
     println!("elapsed: {:?}", elapsed);
     println!(
         "Row throughput: {} rows/sec",
@@ -211,6 +256,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
         bytes_throughput
     );
 
+    #[cfg(feature = "dataframe")]
     if let Some(path) = args.to_parquet {
         println!("Writing dataframe to {} as parquet", path);
         let path = Path::new(&path);
