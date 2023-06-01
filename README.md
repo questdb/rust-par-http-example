@@ -101,7 +101,7 @@ cargo run --release -- --help
 To run the example:
 
 ```shell
-cargo run --release -- --concurrency 5
+cargo run --release -- --concurrency 8
 ```
 
 ```
