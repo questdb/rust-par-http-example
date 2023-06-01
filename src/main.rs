@@ -4,9 +4,7 @@ use futures::stream::TryStreamExt;
 use futures::{stream, StreamExt};
 use polars::export::chrono::NaiveDateTime;
 use polars::frame::DataFrame;
-use polars::prelude::{
-    ChunkedBuilder, Float64Type, Int64Type, PrimitiveChunkedBuilder, TimeUnit, Utf8ChunkedBuilder,
-};
+use polars::prelude::{ChunkedBuilder, concat, Float64Type, Int64Type, IntoLazy, LazyFrame, PrimitiveChunkedBuilder, TimeUnit, Utf8ChunkedBuilder};
 use polars::series::Series;
 use reqwest::Url;
 use std::io;
@@ -39,8 +37,8 @@ enum ColumnVec {
 }
 
 impl ColumnVec {
-    fn new_utf8(name: &str) -> Self {
-        Self::Utf8(Utf8ChunkedBuilder::new(name, 0, 0))
+    fn new_utf8(name: &str, capacity: usize, bytes_capacity: usize) -> Self {
+        Self::Utf8(Utf8ChunkedBuilder::new(name, capacity, bytes_capacity))
     }
 
     fn new_double(name: &str) -> Self {
@@ -52,18 +50,18 @@ impl ColumnVec {
     }
 }
 
-fn new_column(name: &str) -> anyhow::Result<ColumnVec> {
+fn new_column(name: &str, capacity: usize) -> anyhow::Result<ColumnVec> {
     let column = match name {
-        "hostname" => ColumnVec::new_utf8(name),
-        "region" => ColumnVec::new_utf8(name),
-        "datacenter" => ColumnVec::new_utf8(name),
-        "rack" => ColumnVec::new_utf8(name),
-        "os" => ColumnVec::new_utf8(name),
-        "arch" => ColumnVec::new_utf8(name),
-        "team" => ColumnVec::new_utf8(name),
-        "service" => ColumnVec::new_utf8(name),
-        "service_version" => ColumnVec::new_utf8(name),
-        "service_environment" => ColumnVec::new_utf8(name),
+        "hostname" => ColumnVec::new_utf8(name, capacity, 9 * capacity),
+        "region" => ColumnVec::new_utf8(name, capacity, 12 * capacity),
+        "datacenter" => ColumnVec::new_utf8(name, capacity, 13 * capacity),
+        "rack" => ColumnVec::new_utf8(name, capacity, 1 * capacity),
+        "os" => ColumnVec::new_utf8(name, capacity, 13 * capacity),
+        "arch" => ColumnVec::new_utf8(name, capacity, 3 * capacity),
+        "team" => ColumnVec::new_utf8(name, capacity, 3 * capacity),
+        "service" => ColumnVec::new_utf8(name, capacity, 2 * capacity),
+        "service_version" => ColumnVec::new_utf8(name, capacity, 1 * capacity),
+        "service_environment" => ColumnVec::new_utf8(name, capacity, 7 * capacity),
         "usage_user" => ColumnVec::new_double(name),
         "usage_system" => ColumnVec::new_double(name),
         "usage_idle" => ColumnVec::new_double(name),
@@ -80,7 +78,7 @@ fn new_column(name: &str) -> anyhow::Result<ColumnVec> {
     Ok(column)
 }
 
-async fn to_dataframe(response: reqwest::Response) -> anyhow::Result<DataFrame> {
+async fn to_dataframe(response: reqwest::Response, start_row: usize, end_row: usize) -> anyhow::Result<DataFrame> {
     let stream = response.bytes_stream();
     let stream = stream.map_err(|e| io::Error::new(io::ErrorKind::Other, e));
     let async_reader = stream.into_async_read();
@@ -91,9 +89,10 @@ async fn to_dataframe(response: reqwest::Response) -> anyhow::Result<DataFrame> 
 
     let mut columns = Vec::new();
 
+    let row_count = end_row - start_row;
     let headers = csv_reader.headers().await?;
     for header in headers.iter() {
-        let column = new_column(header)?;
+        let column = new_column(header, row_count)?;
         columns.push(column);
     }
 
@@ -162,18 +161,20 @@ async fn run(args: Args) -> anyhow::Result<()> {
                 let query = format!("select * from cpu limit {},{}", start_row, end_row);
                 let url = Url::parse_with_params(&base, &[("query", query)])?;
                 let response = client.get(url).send().await?;
-                let frame = to_dataframe(response).await?;
-                Ok::<_, anyhow::Error>(frame)
+                let frame = to_dataframe(response, start_row, end_row).await?;
+                Ok::<_, anyhow::Error>((start_row, end_row, frame))
             }
         })
         .buffer_unordered(args.concurrency);
-    let frames = results.collect::<Vec<_>>().await;
+    let frames_or_err = results.collect::<Vec<_>>().await;
+    let mut frames = frames_or_err.into_iter().collect::<anyhow::Result<Vec<_>>>()?;
+    frames.sort_by_key(|(start_row, _, _)| *start_row);
+    let frames: Vec<LazyFrame> = frames.into_iter().map(|(_, _, frame)| frame.lazy()).collect();
+    let frame: DataFrame = concat(&frames, false, false)?.collect()?;
     let elapsed = start_time.elapsed();
-    for frame in frames {
-        let frame = frame?;
-        println!("{}", frame);
-    }
+    println!("{}", frame);
     println!("elapsed: {:?}", elapsed);
+    println!("rows/sec: {}", (tot_rows as f64 / elapsed.as_secs_f64()) as u64);
     Ok(())
 }
 

@@ -31,10 +31,32 @@ Next, double-check that the server is running and serving requests over HTTP.
 
 Visit: http://localhost:9000/
 
-> :information_source: Once you're done, stop QuestDB by running `./questdb-7.1.3-rt-linux-amd64/bin/questdb.sh stop`.
+## Configuring QuestDB
+
+Now that we've started the DB for the first time, we can tweak its default generated configuration.
+
+Temporarily, stop the server:
+
+```shell
+cd questdb  # if you're not in the questdb dir already
+./questdb-7.1.3-rt-linux-amd64/bin/questdb.sh stop -d data
+```
+
+Edit `questdb/data/conf/server.conf` and add the following settings:
+
+```ini
+http.connection.pool.initial.capacity=16
+http.worker.count=16
+```
+
+Then start QuestDB again:
+
+```shell
+./questdb-7.1.3-rt-linux-amd64/bin/questdb.sh start -d data
+```
 
 
-## Insert sample data
+## Insert 5 million rows of sample data
 
 Once you have a QuestDB instance running, you can insert sample data via the Python TSBS script.
 
@@ -91,4 +113,48 @@ Run the rest of the commands from the git checkout root directory: `cd ..`.
 
 ```shell
 cargo build --release
+```
+
+## Run the Rust binary
+
+To see all options:
+
+```shell
+cargo run --release -- --help
+```
+
+To run the example:
+
+```shell
+cargo run --release -- --concurrency 5
+```
+
+```
+    Finished release [optimized] target(s) in 0.07s
+     Running `target/release/rust-par-http-example --concurrency 5`
+shape: (5_000_000, 21)
+┌───────────┬────────────────┬─────────────────┬──────┬───┬─────────────┬─────────────┬──────────────────┬─────────────────────┐
+│ hostname  ┆ region         ┆ datacenter      ┆ rack ┆ … ┆ usage_steal ┆ usage_guest ┆ usage_guest_nice ┆ timestamp           │
+│ ---       ┆ ---            ┆ ---             ┆ ---  ┆   ┆ ---         ┆ ---         ┆ ---              ┆ ---                 │
+│ str       ┆ str            ┆ str             ┆ str  ┆   ┆ f64         ┆ f64         ┆ f64              ┆ datetime[ns]        │
+╞═══════════╪════════════════╪═════════════════╪══════╪═══╪═════════════╪═════════════╪══════════════════╪═════════════════════╡
+│ host_0    ┆ ap-southeast-2 ┆ ap-southeast-2b ┆ 96   ┆ … ┆ 0.726996    ┆ 0.0         ┆ 0.0              ┆ 2016-01-01 00:00:00 │
+│ host_1    ┆ eu-west-1      ┆ eu-west-1b      ┆ 52   ┆ … ┆ 1.022753    ┆ 1.711183    ┆ 0.0              ┆ 2016-01-01 00:00:10 │
+│ host_2    ┆ us-west-1      ┆ us-west-1b      ┆ 69   ┆ … ┆ 0.0         ┆ 0.472402    ┆ 0.312164         ┆ 2016-01-01 00:00:20 │
+│ host_3    ┆ us-west-2      ┆ us-west-2c      ┆ 8    ┆ … ┆ 0.0         ┆ 0.0         ┆ 1.496152         ┆ 2016-01-01 00:00:30 │
+│ …         ┆ …              ┆ …               ┆ …    ┆ … ┆ …           ┆ …           ┆ …                ┆ …                   │
+│ host_3996 ┆ us-west-2      ┆ us-west-2a      ┆ 67   ┆ … ┆ 23.045458   ┆ 76.46893    ┆ 17.091646        ┆ 2017-08-01 16:52:40 │
+│ host_3997 ┆ us-west-2      ┆ us-west-2b      ┆ 63   ┆ … ┆ 20.375169   ┆ 78.043473   ┆ 17.870002        ┆ 2017-08-01 16:52:50 │
+│ host_3998 ┆ eu-west-1      ┆ eu-west-1b      ┆ 53   ┆ … ┆ 21.004499   ┆ 78.341154   ┆ 18.880808        ┆ 2017-08-01 16:53:00 │
+│ host_3999 ┆ us-east-1      ┆ us-east-1c      ┆ 87   ┆ … ┆ 19.05504    ┆ 78.094993   ┆ 19.263652        ┆ 2017-08-01 16:53:10 │
+└───────────┴────────────────┴─────────────────┴──────┴───┴─────────────┴─────────────┴──────────────────┴─────────────────────┘
+elapsed: 5.741844323s
+rows/sec: 870800
+```
+
+## Finally, stop QuestDB
+
+```shell
+cd questdb
+./questdb-7.1.3-rt-linux-amd64/bin/questdb.sh stop -d data
 ```
