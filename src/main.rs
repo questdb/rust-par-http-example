@@ -1,10 +1,12 @@
 use clap::Parser;
-use csv_async::AsyncReaderBuilder;
+use csv_async::{AsyncReaderBuilder, StringRecord};
 use futures::stream::TryStreamExt;
-use futures::{stream, StreamExt};
 use polars::export::chrono::NaiveDateTime;
 use polars::frame::DataFrame;
-use polars::prelude::{ChunkedBuilder, concat, Float64Type, Int64Type, IntoLazy, LazyFrame, PrimitiveChunkedBuilder, TimeUnit, Utf8ChunkedBuilder};
+use polars::prelude::{
+    concat, ChunkedBuilder, Float64Type, Int64Type, IntoLazy, PrimitiveChunkedBuilder, TimeUnit,
+    Utf8ChunkedBuilder,
+};
 use polars::series::Series;
 use reqwest::Url;
 use std::io;
@@ -82,7 +84,11 @@ fn new_column(name: &str, capacity: usize) -> anyhow::Result<ColumnVec> {
     Ok(column)
 }
 
-async fn to_dataframe(response: reqwest::Response, start_row: usize, end_row: usize) -> anyhow::Result<DataFrame> {
+async fn to_dataframe(
+    response: reqwest::Response,
+    start_row: usize,
+    end_row: usize,
+) -> anyhow::Result<(u64, DataFrame)> {
     let stream = response.bytes_stream();
     let stream = stream.map_err(|e| io::Error::new(io::ErrorKind::Other, e));
     let async_reader = stream.into_async_read();
@@ -100,13 +106,9 @@ async fn to_dataframe(response: reqwest::Response, start_row: usize, end_row: us
         columns.push(column);
     }
 
-    let mut records = csv_reader.byte_records();
-
-    while let Some(record) = records.next().await {
-        let record = record?;
-        let thread_id = std::thread::current().id();
+    let mut record = StringRecord::new();
+    while csv_reader.read_record(&mut record).await? {
         for (i, value) in record.iter().enumerate() {
-            let value = unsafe { std::str::from_utf8_unchecked(value) };
             let column = &mut columns[i];
             match column {
                 ColumnVec::Utf8(vec) => vec.append_value(value.to_owned()),
@@ -120,6 +122,7 @@ async fn to_dataframe(response: reqwest::Response, start_row: usize, end_row: us
         }
     }
 
+    let pos = csv_reader.position().byte();
     let series = columns
         .into_iter()
         .map(|column| match column {
@@ -133,7 +136,7 @@ async fn to_dataframe(response: reqwest::Response, start_row: usize, end_row: us
         .collect::<Vec<_>>();
 
     let df = DataFrame::new(series)?;
-    Ok(df)
+    Ok((pos, df))
 }
 
 async fn run(args: Args) -> anyhow::Result<()> {
@@ -162,23 +165,28 @@ async fn run(args: Args) -> anyhow::Result<()> {
 
     let start_time = std::time::Instant::now();
 
-    let handles: Vec<_> = ranges.iter().map(|(start_row, end_row)| {
-        let start_row = *start_row;
-        let end_row = *end_row;
-        let base_url = base_url.clone();
-        let client = client.clone();
-        tokio::task::spawn(async move {
-            let query = format!("select * from cpu limit {},{}", start_row, end_row);
-            let url = Url::parse_with_params(&base_url, &[("query", query)])?;
-            let response = client.get(url).send().await?;
-            let frame = to_dataframe(response, start_row, end_row).await?;
-            Ok::<_, anyhow::Error>(frame)
+    let handles: Vec<_> = ranges
+        .iter()
+        .map(|(start_row, end_row)| {
+            let start_row = *start_row;
+            let end_row = *end_row;
+            let base_url = base_url.clone();
+            let client = client.clone();
+            tokio::task::spawn(async move {
+                let query = format!("select * from cpu limit {},{}", start_row, end_row);
+                let url = Url::parse_with_params(&base_url, &[("query", query)])?;
+                let response = client.get(url).send().await?;
+                let (byte_count, frame) = to_dataframe(response, start_row, end_row).await?;
+                Ok::<_, anyhow::Error>((byte_count, frame))
+            })
         })
-    }).collect();
+        .collect();
 
     let mut frames: Vec<_> = Vec::new();
+    let mut tot_bytes = 0;
     for handle in handles {
-        let frame = handle.await??;
+        let (byte_count, frame) = handle.await??;
+        tot_bytes += byte_count;
         frames.push(frame.lazy());
     }
 
@@ -186,7 +194,15 @@ async fn run(args: Args) -> anyhow::Result<()> {
     let elapsed = start_time.elapsed();
     println!("{}", frame);
     println!("elapsed: {:?}", elapsed);
-    println!("rows/sec: {}", (tot_rows as f64 / elapsed.as_secs_f64()) as u64);
+    println!(
+        "Row throughput: {} rows/sec",
+        (tot_rows as f64 / elapsed.as_secs_f64()) as u64
+    );
+    let bytes_throughput = (tot_bytes as f64 / 1024.0 / 1024.0 / elapsed.as_secs_f64()) as u64;
+    println!(
+        "Data throughput: {} MiB/sec (of downloaded CSV data)",
+        bytes_throughput
+    );
     Ok(())
 }
 
