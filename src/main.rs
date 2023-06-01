@@ -147,7 +147,7 @@ async fn to_dataframe(
             let column = &mut col_builders[i];
             // We parse each cell and append it to the appropriate column builder.
             match column {
-                ColumnBuilder::Utf8(builder) => builder.append_value(value.to_owned()),
+                ColumnBuilder::Utf8(builder) => builder.append_value(value),
                 ColumnBuilder::Double(builder) => builder.append_value(value.parse::<f64>()?),
                 ColumnBuilder::Timestamp(builder) => {
                     let ts = NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S.%fZ")?;

@@ -123,9 +123,9 @@ shape: (5_000_000, 21)
 │ host_3998 ┆ eu-west-1      ┆ eu-west-1b      ┆ 53   ┆ … ┆ 21.004499   ┆ 78.341154   ┆ 18.880808        ┆ 2017-08-01 16:53:00 │
 │ host_3999 ┆ us-east-1      ┆ us-east-1c      ┆ 87   ┆ … ┆ 19.05504    ┆ 78.094993   ┆ 19.263652        ┆ 2017-08-01 16:53:10 │
 └───────────┴────────────────┴─────────────────┴──────┴───┴─────────────┴─────────────┴──────────────────┴─────────────────────┘
-elapsed: 1.861212519s
-Row throughput: 2686420 rows/sec
-Data throughput: 715 MiB/sec (of downloaded CSV data)
+elapsed: 1.647855202s
+Row throughput: 3034247 rows/sec
+Data throughput: 808 MiB/sec (of downloaded CSV data)
 ```
 
 ## Synthetic HTTP benchmark
