@@ -1,45 +1,51 @@
-use clap::Parser;
-use reqwest::Url;
-use tokio;
+#[cfg(feature = "dataframe")]
+use std::{fs::File, io, path::Path};
 
+use clap::Parser;
 // The dataframe feature is enabled by default: It decodes the CSV response from the server
 // and constructs a Pola.rs DataFrame.
 // This is to provide a representative example of what performance can be obtained, including the
 // cost of decoding the CSV response.
 // To benchmark without this feature, see the README.md's "Synthetic HTTP benchmark" section.
 #[cfg(feature = "dataframe")]
-use csv_async::{AsyncReaderBuilder, StringRecord}; // async CSV reader
-
+use csv_async::{AsyncReaderBuilder, StringRecord};
 #[cfg(feature = "dataframe")]
-use futures::stream::TryStreamExt; // extension trait for working with streams of async values
-
-#[cfg(feature = "dataframe")]
-use std::{fs::File, io, path::Path};
-
+use futures::stream::TryStreamExt;
 #[cfg(feature = "dataframe")]
 use polars::{
     export::chrono::NaiveDateTime,
     frame::DataFrame, // in-memory table
     prelude::{
-        concat, ChunkedBuilder, Float64Type, Int64Type, IntoLazy, PrimitiveChunkedBuilder,
+        ChunkedBuilder, concat, Float64Type, Int64Type, IntoLazy, PrimitiveChunkedBuilder,
         TimeUnit, Utf8ChunkedBuilder,
     },
     series::Series, // column
 };
-
 #[cfg(feature = "dataframe")]
 use polars_io::parquet::ParquetWriter;
+use reqwest::Url;
+use tokio;
+
+// async CSV reader
+
+// extension trait for working with streams of async values
 
 /// Query the TSBS dataset into memory from concurrent connections.
-#[derive(Parser)]
+#[derive(Parser,Clone)]
 struct Args {
     /// QuestDB Host
     #[clap(long, default_value = "localhost")]
     host: String,
 
     /// QuestDB HTTP port
-    #[clap(long, default_value = "9000")]
+    #[clap(long, default_value = "443")]
     port: u16,
+
+    #[clap(long, default_value = "")]
+    user: String,
+
+    #[clap(long, default_value = "")]
+    password: String,
 
     /// Maximum number of io threads [default: CPU count]
     #[clap(long)]
@@ -50,7 +56,7 @@ struct Args {
     concurrency: usize,
 
     /// Number of rows to query
-    #[clap(long, default_value = "5000000")]
+    #[clap(long, default_value = "26226829")]
     tot_rows: usize,
 
     /// Write the result to Parquet format at this path
@@ -84,27 +90,42 @@ impl ColumnBuilder {
 #[cfg(feature = "dataframe")]
 fn new_column_builder(col_name: &str, capacity: usize) -> anyhow::Result<ColumnBuilder> {
     let column = match col_name {
-        "hostname" => ColumnBuilder::new_utf8(col_name, capacity, 9 * capacity),
-        "region" => ColumnBuilder::new_utf8(col_name, capacity, 12 * capacity),
-        "datacenter" => ColumnBuilder::new_utf8(col_name, capacity, 13 * capacity),
-        "rack" => ColumnBuilder::new_utf8(col_name, capacity, 1 * capacity),
-        "os" => ColumnBuilder::new_utf8(col_name, capacity, 13 * capacity),
-        "arch" => ColumnBuilder::new_utf8(col_name, capacity, 3 * capacity),
-        "team" => ColumnBuilder::new_utf8(col_name, capacity, 3 * capacity),
-        "service" => ColumnBuilder::new_utf8(col_name, capacity, 2 * capacity),
-        "service_version" => ColumnBuilder::new_utf8(col_name, capacity, 1 * capacity),
-        "service_environment" => ColumnBuilder::new_utf8(col_name, capacity, 7 * capacity),
-        "usage_user" => ColumnBuilder::new_double(col_name, capacity),
-        "usage_system" => ColumnBuilder::new_double(col_name, capacity),
-        "usage_idle" => ColumnBuilder::new_double(col_name, capacity),
-        "usage_nice" => ColumnBuilder::new_double(col_name, capacity),
-        "usage_iowait" => ColumnBuilder::new_double(col_name, capacity),
-        "usage_irq" => ColumnBuilder::new_double(col_name, capacity),
-        "usage_softirq" => ColumnBuilder::new_double(col_name, capacity),
-        "usage_steal" => ColumnBuilder::new_double(col_name, capacity),
-        "usage_guest" => ColumnBuilder::new_double(col_name, capacity),
-        "usage_guest_nice" => ColumnBuilder::new_double(col_name, capacity),
-        "timestamp" => ColumnBuilder::new_timestamp(col_name, capacity),
+        "TradeDate" => ColumnBuilder::new_timestamp(col_name, capacity),
+        "OQI" => ColumnBuilder::new_utf8(col_name, capacity, capacity),
+        "Bid" => ColumnBuilder::new_double(col_name, capacity),
+        "Ask" => ColumnBuilder::new_double(col_name, capacity),
+        "ODMP" => ColumnBuilder::new_double(col_name, capacity),
+        "SettlementPrice" => ColumnBuilder::new_double(col_name, capacity),
+        "Last" => ColumnBuilder::new_double(col_name, capacity),
+        "SRC" => ColumnBuilder::new_utf8(col_name, capacity, capacity),
+        "ExpirationDate" => ColumnBuilder::new_timestamp(col_name, capacity),
+        "StrikePrice" => ColumnBuilder::new_double(col_name, capacity),
+        "C1PM1" => ColumnBuilder::new_double(col_name, capacity),
+        "COP" => ColumnBuilder::new_utf8(col_name, capacity, capacity),
+        "AssetType" => ColumnBuilder::new_utf8(col_name, capacity, capacity),
+        "AssetClass" => ColumnBuilder::new_utf8(col_name, capacity, capacity),
+        "SuperROOT" => ColumnBuilder::new_utf8(col_name, capacity, capacity),
+        "ROOT" => ColumnBuilder::new_utf8(col_name, capacity, capacity),
+        "UDL" => ColumnBuilder::new_utf8(col_name, capacity, capacity),
+        "SettlementOQI" => ColumnBuilder::new_utf8(col_name, capacity, capacity),
+        "RateOQI" => ColumnBuilder::new_utf8(col_name, capacity, capacity),
+        "UDL_OQI" => ColumnBuilder::new_utf8(col_name, capacity, capacity),
+        "TTM" => ColumnBuilder::new_double(col_name, capacity),
+        "ATTM" => ColumnBuilder::new_double(col_name, capacity),
+        "Rate" => ColumnBuilder::new_double(col_name, capacity),
+        "Spot" => ColumnBuilder::new_double(col_name, capacity),
+        "Moneyness" => ColumnBuilder::new_double(col_name, capacity),
+        "RIC" => ColumnBuilder::new_utf8(col_name, capacity, capacity),
+        "RICRoot" => ColumnBuilder::new_utf8(col_name, capacity, capacity),
+        "UnderlyingRIC" => ColumnBuilder::new_utf8(col_name, capacity, capacity),
+        "SettlementRIC" => ColumnBuilder::new_utf8(col_name, capacity, capacity),
+        "PutCallFlag" => ColumnBuilder::new_utf8(col_name, capacity, capacity),
+        "IV" => ColumnBuilder::new_double(col_name, capacity),
+        "delta" => ColumnBuilder::new_double(col_name, capacity),
+        "gamma" => ColumnBuilder::new_double(col_name, capacity),
+        "theta" => ColumnBuilder::new_double(col_name, capacity),
+        "rho" => ColumnBuilder::new_double(col_name, capacity),
+        "vega" => ColumnBuilder::new_double(col_name, capacity),
         _ => return Err(anyhow::anyhow!("unknown column {:?}", col_name)),
     };
     Ok(column)
@@ -118,6 +139,7 @@ async fn to_dataframe(
     start_row: usize,
     end_row: usize,
 ) -> anyhow::Result<(u64, DataFrame)> {
+
     // We use the `reqwest` library to query HTTP.
     // It returns a stream that first needs to be converted into an async reader before we can use it.
     let stream = response.bytes_stream();
@@ -135,25 +157,53 @@ async fn to_dataframe(
     let mut col_builders = Vec::new();
     let row_count = end_row - start_row;
     let headers = csv_reader.headers().await?;
+    let mut header_names = Vec::new();
+
     for header in headers.iter() {
         let column = new_column_builder(header, row_count)?;
         col_builders.push(column);
+        header_names.push(header.to_string());
     }
 
     // We loop through the CSV data as it's streamed in from the server.
     // We re-use a single record to avoid allocating a new one for each row.
+    let mut row_count = 0;
     let mut record = StringRecord::new();
     while csv_reader.read_record(&mut record).await? {
+
+        if row_count % 100000 == 0 {
+            eprintln!("row: {}", row_count);
+        }
+
+        row_count += 1;
+        continue;
         for (i, value) in record.iter().enumerate() {
             let column = &mut col_builders[i];
             // We parse each cell and append it to the appropriate column builder.
             match column {
-                ColumnBuilder::Utf8(builder) => builder.append_value(value),
-                ColumnBuilder::Double(builder) => builder.append_value(value.parse::<f64>()?),
+                ColumnBuilder::Utf8(builder) => {
+                    if value == "" {
+                        builder.append_null();
+                    } else {
+                        builder.append_value(value);
+                    }
+                }
+                ColumnBuilder::Double(builder) => {
+                    // eprintln!("value: {}, name: {}", value, header_names[i]);
+                    if value == "" {
+                        builder.append_null();
+                    } else {
+                        builder.append_value(value.parse::<f64>()?)
+                    }
+                }
                 ColumnBuilder::Timestamp(builder) => {
-                    let ts = NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S.%fZ")?;
-                    let parsed = ts.timestamp_nanos();
-                    builder.append_value(parsed);
+                    if value == "" {
+                        builder.append_null();
+                    } else {
+                        let ts = NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S.%fZ")?;
+                        let parsed = ts.timestamp_nanos();
+                        builder.append_value(parsed);
+                    }
                 }
             }
         }
@@ -179,7 +229,7 @@ async fn to_dataframe(
 
 async fn run(args: Args) -> anyhow::Result<()> {
     // We use the `/exp` endpoint (rather than /exec which returns JSON) for efficiency.
-    let base_url = format!("http://{}:{}/exp", args.host, args.port);
+    let base_url = format!("https://{}:{}/exp", args.host, args.port);
     let tot_rows = args.tot_rows;
     let rows_per_spawn = tot_rows / args.concurrency;
     if rows_per_spawn == 0 {
@@ -210,6 +260,8 @@ async fn run(args: Args) -> anyhow::Result<()> {
         })
         .collect::<Vec<_>>();
 
+    println!("ranges: {:?}", ranges);
+
     let start_time = std::time::Instant::now();
 
     let handles: Vec<_> = ranges
@@ -219,10 +271,15 @@ async fn run(args: Args) -> anyhow::Result<()> {
             let end_row = *end_row;
             let base_url = base_url.clone();
             let client = client.clone();
+            let args = args.clone();
             tokio::task::spawn(async move {
-                let query = format!("select * from cpu limit {},{}", start_row, end_row);
+                let query = format!("select * from PJG limit {},{}", start_row, end_row);
+                println!("query: {}", query);
                 let url = Url::parse_with_params(&base_url, &[("query", query)])?;
-                let response = client.get(url).send().await?;
+                let response = client
+                    .get(url)
+                    .basic_auth(args.user, Some(args.password))
+                    .send().await?;
 
                 #[cfg(feature = "dataframe")]
                 {
@@ -240,14 +297,14 @@ async fn run(args: Args) -> anyhow::Result<()> {
         .collect();
 
     #[cfg(feature = "dataframe")]
-    let mut frames: Vec<_> = Vec::new();
+        let mut frames: Vec<_> = Vec::new();
     let mut tot_bytes = 0;
     for handle in handles {
         #[cfg(feature = "dataframe")]
-        let (byte_count, frame) = handle.await??;
+            let (byte_count, frame) = handle.await??;
 
         #[cfg(not(feature = "dataframe"))]
-        let byte_count = handle.await??;
+            let byte_count = handle.await??;
 
         tot_bytes += byte_count;
 
@@ -258,7 +315,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
     // We concatenate the dataframes from each task into a single dataframe.
     // Pola.rs uses Arrow chuncked arrays, so this is a zero-copy operation.
     #[cfg(feature = "dataframe")]
-    let mut frame: DataFrame = concat(&frames, false, false)?.collect()?;
+        let mut frame: DataFrame = concat(&frames, false, false)?.collect()?;
 
     let elapsed = start_time.elapsed();
 
