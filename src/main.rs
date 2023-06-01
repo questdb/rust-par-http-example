@@ -8,22 +8,23 @@ use tokio;
 // cost of decoding the CSV response.
 // To benchmark without this feature, see the README.md's "Synthetic HTTP benchmark" section.
 #[cfg(feature = "dataframe")]
-use csv_async::{AsyncReaderBuilder, StringRecord};  // async CSV reader
+use csv_async::{AsyncReaderBuilder, StringRecord}; // async CSV reader
 
 #[cfg(feature = "dataframe")]
-use futures::stream::TryStreamExt;  // extension trait for working with streams of async values
+use futures::stream::TryStreamExt; // extension trait for working with streams of async values
 
 #[cfg(feature = "dataframe")]
 use std::{fs::File, io, path::Path};
 
 #[cfg(feature = "dataframe")]
 use polars::{
-    frame::DataFrame,  // in-memory table
     export::chrono::NaiveDateTime,
-    series::Series,  // column
+    frame::DataFrame, // in-memory table
     prelude::{
-        concat, ChunkedBuilder, Float64Type, Int64Type, IntoLazy, PrimitiveChunkedBuilder, TimeUnit,
-        Utf8ChunkedBuilder},
+        concat, ChunkedBuilder, Float64Type, Int64Type, IntoLazy, PrimitiveChunkedBuilder,
+        TimeUnit, Utf8ChunkedBuilder,
+    },
+    series::Series, // column
 };
 
 #[cfg(feature = "dataframe")]
@@ -164,10 +165,10 @@ async fn to_dataframe(
     let series = col_builders
         .into_iter()
         .map(|column| match column {
-            ColumnBuilder::Utf8(vec) => Series::from(vec.finish()),
-            ColumnBuilder::Double(vec) => Series::from(vec.finish()),
-            ColumnBuilder::Timestamp(vec) => {
-                let dt_chunked = vec.finish().into_datetime(TimeUnit::Nanoseconds, None);
+            ColumnBuilder::Utf8(builder) => Series::from(builder.finish()),
+            ColumnBuilder::Double(builder) => Series::from(builder.finish()),
+            ColumnBuilder::Timestamp(builder) => {
+                let dt_chunked = builder.finish().into_datetime(TimeUnit::Nanoseconds, None);
                 Series::from(dt_chunked)
             }
         })
@@ -241,7 +242,6 @@ async fn run(args: Args) -> anyhow::Result<()> {
     let mut frames: Vec<_> = Vec::new();
     let mut tot_bytes = 0;
     for handle in handles {
-
         #[cfg(feature = "dataframe")]
         let (byte_count, frame) = handle.await??;
 
